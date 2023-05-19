@@ -74,12 +74,17 @@ func init() {
 }
 
 func queryTables(db *sql.DB, dbName string) (*sql.Rows, error) {
+	_, err := db.Exec(`USE $1`, dbName)
+	if err != nil {
+		return nil, err
+	}
+
 	return db.Query(`
 	SELECT
 		size.namespace,
 		size.table_name, 
-		COALESCE(size.size, 0) AS size,
-		COALESCE(rows.rows, 0) AS rows
+		size.size AS size,
+		rows.rows AS rows
 	FROM
 		(SELECT schema_name AS namespace, table_name, SUM(range_size) AS size 
 			FROM crdb_internal.ranges 
