@@ -1,0 +1,27 @@
+name: Test and coverage
+
+on:
+  push:
+    
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+
+      - name: Start docker compose environment
+        run: docker compose -f .devcontainer/compose.yaml up -d
+
+      - name: docker ps
+        run: docker ps 
+
+      - name: Fixup git permission checking
+        run: docker exec devcontainer-rowdy-1 git config --global --add safe.directory ${PWD}
+
+      - name: Run tests
+        run: docker exec -w ${PWD} devcontainer-rowdy-1 make test
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v3

@@ -6,7 +6,7 @@ on:
       - "v*"
 
 jobs:
-  build-and-release:
+  release:
     runs-on: ubuntu-latest
 
     steps:
@@ -21,12 +21,6 @@ jobs:
 
       - name: Fixup git permission checking
         run: docker exec devcontainer-rowdy-1 git config --global --add safe.directory ${PWD}
-
-      - name: Run tests
-        run: docker exec -w ${PWD} devcontainer-rowdy-1 make test
-
-      - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v3
 
       - name: Build Binaries
         run: docker exec -w ${PWD} devcontainer-rowdy-1 make -j build-all
