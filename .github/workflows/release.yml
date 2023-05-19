@@ -1,0 +1,83 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+
+      - name: Start docker compose environment
+        run: docker compose -f .devcontainer/compose.yaml up -d
+
+      - name: docker ps
+        run: docker ps 
+
+      - name: Fixup git permission checking
+        run: docker exec devcontainer-rowdy-1 git config --global --add safe.directory ${PWD}
+
+      - name: Run tests
+        run: docker exec -w ${PWD} devcontainer-rowdy-1 make test
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v3
+
+      - name: Build Binaries
+        run: docker exec -w ${PWD} devcontainer-rowdy-1 make -j build-all
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+      - name: Upload rowdy_linux_amd64_exporter
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/rowdy_linux_amd64_exporter
+          asset_name: rowdy_linux_amd64_exporter
+          asset_content_type: application/octet-stream
+
+      - name: Upload rowdy_windows_amd64_exporter.exe
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/rowdy_windows_amd64_exporter.exe
+          asset_name: rowdy_windows_amd64_exporter.exe
+          asset_content_type: application/octet-stream
+
+      - name: Upload rowdy_linux_arm64_exporter
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/rowdy_linux_arm64_exporter
+          asset_name: rowdy_linux_arm64_exporter
+          asset_content_type: application/octet-stream
+
+      - name: Upload SHA256SUM.txt
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/SHA256SUM.txt
+          asset_name: SHA256SUM.txt
+          asset_content_type: text/plain

@@ -1,0 +1,28 @@
+{
+    "gopls": {
+        "usePlaceholders": true,
+        "completeUnimported": true,
+        "gofumpt": true,
+        "ui.diagnostic.staticcheck": true
+    },
+    "go.testFlags": [
+        "-count=1",
+    ],
+    "go.useLanguageServer": true,
+    "files.eol": "\n",
+    "go.lintTool": "staticcheck",
+    "go.lintOnSave": "file",
+    "editor.formatOnSaveMode": "file",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": true
+    },
+    "cSpell.words": [
+        "CONNSTR",
+        "crdb",
+        "nspname",
+        "patrickmn",
+        "promhttp",
+        "relnamespace"
+    ],
+}

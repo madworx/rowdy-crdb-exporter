@@ -1,0 +1,4 @@
+dist
+.gomodtidy
+__debug_bin
+coverage.*

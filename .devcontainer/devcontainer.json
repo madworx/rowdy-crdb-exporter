@@ -1,0 +1,26 @@
+{
+  "name": "Go",
+  "dockerComposeFile": "compose.yaml",
+  "workspaceFolder": "${localWorkspaceFolder}",
+  "service": "rowdy",
+  "customizations": {
+    "vscode": {
+      "settings": {},
+      "extensions": [
+        "github.copilot",
+        "github.vscode-github-actions",
+        "ms-vsliveshare.vsliveshare",
+        "streetsidesoftware.code-spell-checker"
+      ]
+    }
+  },
+
+  "portsAttributes": {
+    "9612": {
+      "label": "Prometheus /metrics",
+      "onAutoForward": "notify"
+    }
+  },
+
+  "postCreateCommand": "go mod tidy"
+}
