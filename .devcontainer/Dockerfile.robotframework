@@ -1,0 +1,3 @@
+FROM python:3-alpine
+RUN pip install --no-cache-dir robotframework robotframework-databaselibrary robotframework-requests psycopg2-binary prometheus_client
+ENTRYPOINT ["/usr/local/bin/robot"]

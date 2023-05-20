@@ -2,3 +2,6 @@ dist
 .gomodtidy
 __debug_bin
 coverage.*
+e2e_tests/app
+e2e_tests/__pycache__
+e2e_tests/results

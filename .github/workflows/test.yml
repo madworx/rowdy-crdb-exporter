@@ -12,16 +12,22 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Start docker compose environment
-        run: docker compose -f .devcontainer/compose.yaml up -d
+        run: docker compose up -d
 
       - name: docker ps
         run: docker ps 
 
       - name: Fixup git permission checking
-        run: docker exec devcontainer-rowdy-1 git config --global --add safe.directory ${PWD}
+        run: docker exec rowdy git config --global --add safe.directory ${PWD}
 
-      - name: Run tests
-        run: docker exec -w ${PWD} devcontainer-rowdy-1 make test
+      - name: Fixup golang and cache directory for devcontainer
+        run: docker exec rowdy sh -c 'mkdir /.cache && chmod -R 777 /go /.cache'
+
+      - name: Run unit tests
+        run: docker exec -u $(id -u) -w ${PWD} rowdy make test
+
+      - name: Run e2e tests
+        run: make coverage-e2e.out
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v3
