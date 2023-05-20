@@ -34,11 +34,11 @@ e2e_tests/app: GNUmakefile main.go main_test.go .gomodtidy | $(DIST_DIR)
 
 .PHONY: coverage-e2e.out
 coverage-e2e.out:
-	docker compose exec rowdy make e2e_tests/app
+	docker compose exec -u $(shell id -u) rowdy make e2e_tests/app
 	docker compose run --rm robotframework .
-	docker compose exec rowdy go tool covdata textfmt -i=./e2e_tests -o=coverage-e2e.out
-	docker compose exec rowdy go tool cover -html=coverage-e2e.out -o coverage-e2e.html
-	docker compose exec rowdy go tool covdata percent -i=./e2e_tests
+	docker compose exec -u $(shell id -u) rowdy go tool covdata textfmt -i=./e2e_tests -o=coverage-e2e.out
+	docker compose exec -u $(shell id -u) rowdy go tool cover -html=coverage-e2e.out -o coverage-e2e.html
+	docker compose exec -u $(shell id -u) rowdy go tool covdata percent -i=./e2e_tests
 
 clean:
 	rm -rf $(DIST_DIR) e2e_tests/covcounters.* e2e_tests/covmeta.* coverage-e2e.out coverage-e2e.html coverage.out coverage.html

@@ -20,8 +20,11 @@ jobs:
       - name: Fixup git permission checking
         run: docker exec rowdy git config --global --add safe.directory ${PWD}
 
+      - name: Fixup golang cache directory for devcontainer
+        run: docker exec rowdy chmod -R 777 /go
+
       - name: Run unit tests
-        run: docker exec -w ${PWD} rowdy make test
+        run: docker exec -u $(id -u) -w ${PWD} rowdy make test
 
       - name: Run e2e tests
         run: make coverage-e2e.out
