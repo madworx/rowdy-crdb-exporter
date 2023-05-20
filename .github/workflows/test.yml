@@ -20,8 +20,11 @@ jobs:
       - name: Fixup git permission checking
         run: docker exec rowdy git config --global --add safe.directory ${PWD}
 
-      - name: Run tests
+      - name: Run unit tests
         run: docker exec -w ${PWD} rowdy make test
+
+      - name: Run e2e tests
+        run: make coverage-e2e.out
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v3
