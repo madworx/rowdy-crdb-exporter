@@ -2,7 +2,7 @@ GO := CGO_ENABLED=0 go
 DIST_DIR := dist
 TARGETS := rowdy_linux_amd64_exporter rowdy_windows_amd64_exporter.exe rowdy_linux_arm64_exporter
 TARGETS_DIST := $(addprefix $(DIST_DIR)/, $(TARGETS))
-BUILD_CMD := $(GO) build -ldflags="-X main.gitCommit=$(shell git rev-parse HEAD) -X main.gitTag=$(shell git describe --tags --abbrev=0 2>/dev/null)" -o
+BUILD_CMD := $(GO) build -ldflags="-X main.gitCommit=$(shell git rev-parse --short HEAD) -X main.gitTag=$(shell git describe --tags --abbrev=0 2>/dev/null)" -o
 
 .PHONY: all clean build-all test
 
