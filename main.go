@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"flag"
 	"log"
 	"net/http"
 	"os"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -43,12 +46,6 @@ var (
 			Buckets: prometheus.LinearBuckets(0, 0.2, 10),
 		},
 	)
-	connectErrorsCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Name: "crdb_error_connect",
-			Help: "Number of connection errors encountered",
-		},
-	)
 	queryErrorsCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Name: "crdb_error_query",
@@ -65,10 +62,14 @@ var (
 	gitCommit     string
 	gitTag        string
 	listenAddress string
+	requestCount  uint64
+	requestLimit  int
+	requestMutex  sync.Mutex
+	server        *http.Server
 )
 
 func init() {
-	prometheus.MustRegister(tableRowsGauge, tableSizeGauge, queryHistogram, connectErrorsCounter, queryErrorsCounter, info)
+	prometheus.MustRegister(tableRowsGauge, tableSizeGauge, queryHistogram, queryErrorsCounter, info)
 	info.WithLabelValues(gitCommit, gitTag).Set(1)
 	c = cache.New(time.Second, 10*time.Minute)
 }
@@ -103,35 +104,49 @@ func queryTables(db *sql.DB, dbName string) (*sql.Rows, error) {
 `, dbName)
 }
 
+func checkRequests() {
+	if requestLimit > 0 {
+		atomic.AddUint64(&requestCount, 1)
+		requests := atomic.LoadUint64(&requestCount)
+		if requests >= uint64(requestLimit) {
+			go func() {
+				if err := server.Shutdown(context.Background()); err != nil {
+					log.Fatalf("Could not gracefully shutdown the server: %v\n", err)
+				}
+			}()
+		}
+	}
+}
+
 func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	if _, found := c.Get("metrics"); !found {
 		start := time.Now()
 		db, err := sql.Open("postgres", connStr)
 		if err != nil {
-			connectErrorsCounter.Inc()
 			log.Println("Failed to open connection:", err)
+			queryErrorsCounter.Inc()
 		} else {
 			defer db.Close()
 			rows, err := queryTables(db, dbName)
 			if err != nil {
-				queryErrorsCounter.Inc()
 				log.Println("Failed to execute query:", err)
+				queryErrorsCounter.Inc()
 			} else {
 				defer rows.Close()
 				for rows.Next() {
 					var schema, tableName string
 					var size, estimatedRowCount float64
 					if err := rows.Scan(&schema, &tableName, &size, &estimatedRowCount); err != nil {
-						queryErrorsCounter.Inc()
 						log.Println("Failed to scan row:", err)
+						queryErrorsCounter.Inc()
 					} else {
 						tableRowsGauge.WithLabelValues(dbName, schema, tableName).Set(estimatedRowCount)
 						tableSizeGauge.WithLabelValues(dbName, schema, tableName).Set(size)
 					}
 				}
 				if err := rows.Err(); err != nil {
-					queryErrorsCounter.Inc()
 					log.Println("Error fetching rows:", err)
+					queryErrorsCounter.Inc()
 				}
 				queryHistogram.Observe(time.Since(start).Seconds())
 				c.Set("metrics", true, cache.DefaultExpiration)
@@ -139,13 +154,16 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	promhttp.Handler().ServeHTTP(w, r)
+	checkRequests()
 }
 
 func main() {
 	flag.StringVar(&connStr, "connstr", os.Getenv("CONNSTR"), "Database connection string (environment variable: CONNSTR)")
 	flag.StringVar(&dbName, "db", os.Getenv("DB"), "Database name (environment variable: DB)")
-	cacheTTLStr := os.Getenv("CACHE_TTL")
+	flag.IntVar(&requestLimit, "request_limit", 0, "The maximum number of requests the server will accept before shutting down")
+	flag.StringVar(&listenAddress, "listen_address", os.Getenv("LISTEN_ADDRESS"), "Address to listen on (environment variable: LISTEN_ADDRESS)")
 
+	cacheTTLStr := os.Getenv("CACHE_TTL")
 	if cacheTTLStr != "" {
 		var err error
 		cacheTTL, err = time.ParseDuration(cacheTTLStr)
@@ -156,8 +174,9 @@ func main() {
 		cacheTTL = time.Duration(5) * time.Minute
 	}
 	flag.DurationVar(&cacheTTL, "cache_ttl", cacheTTL, "Cache TTL (environment variable: CACHE_TTL)")
-	flag.StringVar(&listenAddress, "listen_address", os.Getenv("LISTEN_ADDRESS"), "Address to listen on (environment variable: LISTEN_ADDRESS)")
+
 	flag.Parse()
+
 	if listenAddress == "" {
 		listenAddress = ":9612" // Default port
 	}
@@ -171,5 +190,10 @@ func main() {
 		gitCommit, gitTag)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", metricsHandler)
-	log.Fatal(http.ListenAndServe(listenAddress, mux))
+
+	server = &http.Server{
+		Addr:    listenAddress,
+		Handler: mux,
+	}
+	server.ListenAndServe()
 }

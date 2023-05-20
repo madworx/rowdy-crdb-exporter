@@ -1,0 +1,52 @@
+services:
+  rowdy:
+    image: "mcr.microsoft.com/devcontainers/go:1.20"
+    container_name: rowdy
+    hostname: rowdy
+    command: /bin/sh -c "while sleep 1000; do :; done"
+    environment:
+      - CONNSTR=postgresql://root@cockroach:26257/rowdy?sslmode=disable
+      - DB=rowdy
+    volumes:
+      - .:${PWD}
+    working_dir: ${PWD}
+
+  cockroach:
+    image: cockroachdb/cockroach:v22.2.6
+    command: start-single-node --insecure --store=type=mem,size=4GiB
+    ports:
+      - "26257:26257"
+    environment:
+      - COCKROACH_DATABASE=rowdy
+      - COCKROACH_USER=root
+
+  cockroach-client:
+    image: cockroachdb/cockroach:v22.2.6
+    restart: "no"
+    container_name: cockroach-client
+    command:
+      [
+        "sql",
+        "--insecure",
+        "--url",
+        "postgresql://cockroach"
+      ]
+    volumes:
+      - ./roles:/cockroach/roles:ro
+
+  robotframework:
+    image: madworx/robotframework-databaselibrary
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile.robotframework
+    entrypoint:
+      [
+        "/usr/local/bin/robot",
+        "-L",
+        "DEBUG",
+        "-d",
+        "results/"
+      ]
+    volumes:
+      - .:/app
+    working_dir: /app/e2e_tests
