@@ -3,27 +3,66 @@
 [![Test and coverage](https://github.com/madworx/rowdy-crdb-exporter/actions/workflows/test.yml/badge.svg)](https://github.com/madworx/rowdy-crdb-exporter/actions/workflows/test.yml)
 [![codecov](https://codecov.io/gh/madworx/rowdy-crdb-exporter/branch/main/graph/badge.svg?token=4EMXW0RRKU)](https://codecov.io/gh/madworx/rowdy-crdb-exporter)
 
-Rowdy is a tool that connects to a CockroachDB database, fetches information about the (estimated) number of rows in each table, and the disk space those tables consume, then exports this data to Prometheus.
+Rowdy is a tool that connects to a CockroachDB database, fetches information about the (estimated) number of rows in each table, and the disk space those tables consume, then exports this data to Prometheus. By default, it listens on `0.0.0.0:9612`.
 
-*⚠️ Disclaimer: CockroachDB themselves advise against running this type of tool in production environments. The tables that this tool queries are considered experimental and may change in the future. They also consume a considerable amount of resources when queried.*
+*⚠️ Disclaimer: CockroachDB themselves strongly advise against running this type of tool in production environments. The tables this tool queries are considered internal and experimental, and may change in the future. Also, be prepared for it to consume a considerable amount of resources when queried. Don't say I didn't warn you, risk-taker!*
 
 ## Command Line Flags
 
-### `-connstr` : (Environment Variable `CONNSTR`).
-The connection string to connect to your CockroachDB instance.
+### `-connstr`
 
-### `-db` : (Environment Variable `DB`).
-The name of the database you are connecting to.
+The connection string to connect to your CockroachDB instance.  (Environment Variable `CONNSTR`)
 
-### `-listen_address` : (Environment Variable `LISTEN_ADDRESS`).
-The address on which the exporter will listen. If not specified, defaults to :9612.
+### `-db`
 
-### `-cache_ttl` : (Environment Variable `CACHE_TTL`).
-The duration that data should be kept in the cache. This should be a valid Go duration string. If not specified, defaults to 5m (5 minutes).
+The name of the database you are connecting to. (Environment Variable `DB`)
+
+### `-listen_address`
+
+The address on which the exporter will listen. If not specified, defaults to `:9612`.  (Environment Variable `LISTEN_ADDRESS`)
+
+### `-cache_ttl`
+
+The duration that data should be kept in the cache. This should be a valid Go duration string. If not specified, defaults to 5m (5 minutes). (Environment Variable `CACHE_TTL`)
+
+## Running as a Systemd Service
+
+If you want to run Rowdy as a service, you can create a Systemd service file:
+
+```
+[Unit]
+Description=Rowdy CockroachDB Exporter
+After=network.target
+
+[Service]
+ExecStart=/path/to/rowdy -connstr your_conn_str -db your_db_name
+User=rowdy
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Replace `/path/to/rowdy` with the actual path to the `rowdy` binary,
+`your_conn_str` with your connection string, and `your_db_name` with your database name.
+
+To install the service:
+
+1. Save the service file to `/etc/systemd/system/rowdy.service`.
+2. Run `systemctl enable rowdy` to enable the service.
+3. Run `systemctl start rowdy` to start the service.
 
 ## Releases
 
 You can download the compiled binaries of each version of Rowdy from the Github [releases page](https://github.com/madworx/rowdy-crdb-exporter/releases/). Each release contains pre-built binaries for various platforms.
+
+After downloading, it is strongly recommended to verify the binary using the SHA256SUM file provided in each release. This helps ensure the integrity and authenticity of the binary you downloaded. Here's how you can do it:
+
+1. Download both the binary and the corresponding `SHA256SUM.txt` file.
+2. Run the command `sha256sum -c SHA256SUM.txt` in the terminal.
+3. The command should output a message saying that the binary is OK.
+
+If the checksum verification fails, do not use the downloaded binary. It means that the binary may have been tampered with or there was an error in the download.
 
 ## Build From Source
 
@@ -49,4 +88,4 @@ Follow these steps to contribute:
 
 ### License
 
-Rowdy is released under the [MIT](LICENSE).
+Rowdy is released under the [MIT](LICENSE) license.
