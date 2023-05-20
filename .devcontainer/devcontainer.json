@@ -10,6 +10,7 @@
         "github.copilot",
         "github.vscode-github-actions",
         "ms-azuretools.vscode-docker",
+        "MS-SarifVSCode.sarif-viewer",
         "ms-vsliveshare.vsliveshare",
         "streetsidesoftware.code-spell-checker"
       ]
