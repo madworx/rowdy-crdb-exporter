@@ -106,9 +106,8 @@ func queryTables(db *sql.DB, dbName string) (*sql.Rows, error) {
 
 func checkRequests() {
 	if requestLimit > 0 {
-		atomic.AddUint64(&requestCount, 1)
-		requests := atomic.LoadUint64(&requestCount)
-		if requests >= uint64(requestLimit) {
+		requests := atomic.AddUint64(&requestCount, 1)
+		if int(requests) >= requestLimit {
 			go func() {
 				if err := server.Shutdown(context.Background()); err != nil {
 					log.Fatalf("Could not gracefully shutdown the server: %v\n", err)
