@@ -35,3 +35,4 @@ Database with data should be ok
     Wait For Process      timeout=5
     Expect Metric By Selector         crdb_query_count{}          1
     Expect Metric By Selector         crdb_error_query_total{}    0
+    Expect Metric By Selector         crdb_table_rows{db="e2e_test",schema="public",table_name="mekmitasdi"}    1
