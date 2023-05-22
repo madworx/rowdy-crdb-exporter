@@ -117,41 +117,50 @@ func checkRequests() {
 	}
 }
 
-func metricsHandler(w http.ResponseWriter, r *http.Request) {
-	if _, found := c.Get("metrics"); !found {
-		start := time.Now()
-		db, err := sql.Open("postgres", connStr)
-		if err != nil {
-			log.Println("Failed to open connection:", err)
+func updateMetrics() {
+	start := time.Now()
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		log.Println("Failed to open connection:", err)
+		queryErrorsCounter.Inc()
+		return
+	}
+	defer db.Close()
+
+	rows, err := queryTables(db, dbName)
+	if err != nil {
+		log.Println("Failed to execute query:", err)
+		queryErrorsCounter.Inc()
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var schema, tableName string
+		var size, estimatedRowCount float64
+		if err := rows.Scan(&schema, &tableName, &size, &estimatedRowCount); err != nil {
+			log.Println("Failed to scan row:", err)
 			queryErrorsCounter.Inc()
 		} else {
-			defer db.Close()
-			rows, err := queryTables(db, dbName)
-			if err != nil {
-				log.Println("Failed to execute query:", err)
-				queryErrorsCounter.Inc()
-			} else {
-				defer rows.Close()
-				for rows.Next() {
-					var schema, tableName string
-					var size, estimatedRowCount float64
-					if err := rows.Scan(&schema, &tableName, &size, &estimatedRowCount); err != nil {
-						log.Println("Failed to scan row:", err)
-						queryErrorsCounter.Inc()
-					} else {
-						tableRowsGauge.WithLabelValues(dbName, schema, tableName).Set(estimatedRowCount)
-						tableSizeGauge.WithLabelValues(dbName, schema, tableName).Set(size)
-					}
-				}
-				if err := rows.Err(); err != nil {
-					log.Println("Error fetching rows:", err)
-					queryErrorsCounter.Inc()
-				}
-				queryHistogram.Observe(time.Since(start).Seconds())
-				c.Set("metrics", true, cache.DefaultExpiration)
-			}
+			tableRowsGauge.WithLabelValues(dbName, schema, tableName).Set(estimatedRowCount)
+			tableSizeGauge.WithLabelValues(dbName, schema, tableName).Set(size)
 		}
 	}
+
+	if err := rows.Err(); err != nil {
+		log.Println("Error fetching rows:", err)
+		queryErrorsCounter.Inc()
+	}
+
+	queryHistogram.Observe(time.Since(start).Seconds())
+	c.Set("metrics", true, cache.DefaultExpiration)
+}
+
+func metricsHandler(w http.ResponseWriter, r *http.Request) {
+	if _, found := c.Get("metrics"); !found {
+		updateMetrics()
+	}
+
 	promhttp.Handler().ServeHTTP(w, r)
 	checkRequests()
 }
