@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"flag"
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -72,9 +73,20 @@ func init() {
 	prometheus.MustRegister(tableRowsGauge, tableSizeGauge, queryHistogram, queryErrorsCounter, info)
 	info.WithLabelValues(gitCommit, gitTag).Set(1)
 	c = cache.New(time.Second, 10*time.Minute)
+	requestCount = 0
 }
 
-func queryTables(db *sql.DB, dbName string) (*sql.Rows, error) {
+// Regex to match valid identifiers. Adjust as needed.
+var isAlphaNumeric = regexp.MustCompile(`^[a-zA-Z0-9\_]+$`).MatchString
+
+func sanitizeIdentifier(identifier string) (string, error) {
+	if !isAlphaNumeric(identifier) {
+		return "", errors.New("invalid identifier")
+	}
+	return identifier, nil
+}
+
+func queryTables(db DB, dbName string) (RowScanner, error) {
 	_, err := db.Exec(`USE $1`, dbName)
 	if err != nil {
 		return nil, err
@@ -117,9 +129,10 @@ func checkRequests() {
 	}
 }
 
-func updateMetrics() {
+func updateMetrics(dbFactory DBFactory) {
 	start := time.Now()
-	db, err := sql.Open("postgres", connStr)
+
+	db, err := dbFactory.New(connStr)
 	if err != nil {
 		log.Println("Failed to open connection:", err)
 		queryErrorsCounter.Inc()
@@ -158,7 +171,7 @@ func updateMetrics() {
 
 func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	if _, found := c.Get("metrics"); !found {
-		updateMetrics()
+		updateMetrics(&SqlDBFactory{})
 	}
 
 	promhttp.Handler().ServeHTTP(w, r)
@@ -184,6 +197,10 @@ func main() {
 	flag.DurationVar(&cacheTTL, "cache_ttl", cacheTTL, "Cache TTL (environment variable: CACHE_TTL)")
 
 	flag.Parse()
+
+	if _, err := sanitizeIdentifier(dbName); err != nil {
+		log.Fatal("Invalid database name: ", err)
+	}
 
 	if listenAddress == "" {
 		listenAddress = ":9612" // Default port

@@ -4,7 +4,7 @@ Library         DatabaseLibrary
 Library         PrometheusLibrary.py  http://localhost:9612/metrics
 
 *** Variables ***
-${CONNECTION_STRING}    "postgresql://root@cockroach:26257/rowdy?sslmode=disable"
+${CONNECTION_STRING}    "postgresql://root@cockroach:26257/?sslmode=disable"
 
 *** Keywords ***
 Connect To Cockroach

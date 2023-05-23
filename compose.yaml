@@ -10,12 +10,12 @@ services:
     volumes:
       - .:${PWD}
     working_dir: ${PWD}
+    depends_on:
+      - cockroach
 
   cockroach:
     image: cockroachdb/cockroach:v22.2.6
     command: start-single-node --insecure --store=type=mem,size=4GiB
-    ports:
-      - "26257:26257"
     environment:
       - COCKROACH_DATABASE=rowdy
       - COCKROACH_USER=root
@@ -23,7 +23,6 @@ services:
   cockroach-client:
     image: cockroachdb/cockroach:v22.2.6
     restart: "no"
-    container_name: cockroach-client
     command:
       [
         "sql",
@@ -33,6 +32,8 @@ services:
       ]
     volumes:
       - ./roles:/cockroach/roles:ro
+    depends_on:
+      - cockroach
 
   robotframework:
     image: madworx/robotframework-databaselibrary
@@ -50,3 +51,5 @@ services:
     volumes:
       - .:/app
     working_dir: /app/e2e_tests
+    depends_on:
+      - cockroach
