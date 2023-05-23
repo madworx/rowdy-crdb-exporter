@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"flag"
 	"log"
@@ -74,6 +73,7 @@ func init() {
 	prometheus.MustRegister(tableRowsGauge, tableSizeGauge, queryHistogram, queryErrorsCounter, info)
 	info.WithLabelValues(gitCommit, gitTag).Set(1)
 	c = cache.New(time.Second, 10*time.Minute)
+	requestCount = 0
 }
 
 // Regex to match valid identifiers. Adjust as needed.
@@ -86,7 +86,7 @@ func sanitizeIdentifier(identifier string) (string, error) {
 	return identifier, nil
 }
 
-func queryTables(db *sql.DB, dbName string) (*sql.Rows, error) {
+func queryTables(db DB, dbName string) (RowScanner, error) {
 	_, err := db.Exec(`USE $1`, dbName)
 	if err != nil {
 		return nil, err
@@ -129,9 +129,10 @@ func checkRequests() {
 	}
 }
 
-func updateMetrics() {
+func updateMetrics(dbFactory DBFactory) {
 	start := time.Now()
-	db, err := sql.Open("postgres", connStr)
+
+	db, err := dbFactory.New(connStr)
 	if err != nil {
 		log.Println("Failed to open connection:", err)
 		queryErrorsCounter.Inc()
@@ -170,7 +171,7 @@ func updateMetrics() {
 
 func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	if _, found := c.Get("metrics"); !found {
-		updateMetrics()
+		updateMetrics(&SqlDBFactory{})
 	}
 
 	promhttp.Handler().ServeHTTP(w, r)

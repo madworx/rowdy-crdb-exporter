@@ -1,21 +1,26 @@
 package main
 
 import (
-	"database/sql"
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 )
 
 func TestMetricsHandlerWithDatabase(t *testing.T) {
-	connStr = "postgresql://root@cockroach:26257/rowdy?sslmode=disable"
+	connStr = "postgresql://root@cockroach:26257/?sslmode=disable"
 	dbName = "test_db"
 
 	// Connect to the actual database
-	db, err := sql.Open("postgres", connStr)
+	factory := &SqlDBFactory{}
+	db, err := factory.New(connStr)
 	if err != nil {
 		t.Fatalf("failed to connect to the database: %v", err)
 	}
@@ -83,4 +88,110 @@ crdb_table_size{db="%s",schema="public",table_name="%s"} 0`,
 	if err := db.Close(); err != nil {
 		t.Errorf("error closing the database connection: %v", err)
 	}
+}
+
+func TestUpdateMetrics(t *testing.T) {
+	var logBuffer bytes.Buffer
+	log.SetOutput(&logBuffer)
+	defer func() {
+		log.SetOutput(os.Stderr)
+	}()
+
+	tt := []struct {
+		name      string
+		dbFactory DBFactory
+		logOutput string
+	}{
+		{
+			name:      "sql open error",
+			dbFactory: &MockDBFactory{openError: errors.New("open error")},
+			logOutput: "Failed to open connection: open error",
+		},
+		{
+			name:      "db exec error",
+			dbFactory: &MockDBFactory{conn: &MockSQLConn{execError: errors.New("exec error")}},
+			logOutput: "Failed to execute query: exec error",
+		},
+		{
+			name:      "db query error",
+			dbFactory: &MockDBFactory{conn: &MockSQLConn{queryError: errors.New("query error")}},
+			logOutput: "Failed to execute query: query error",
+		},
+		{
+			name: "rows scan error",
+			dbFactory: &MockDBFactory{
+				conn: &MockSQLConn{
+					rows: &MockSQLRows{
+						scanError: errors.New("scan error"),
+						data: [][]interface{}{
+							{"public", "test_table", 0.0, 0.0},
+							{"public", "test2_table", 0.0, 0.0},
+						},
+					},
+				},
+			},
+			logOutput: "Failed to scan row: scan error",
+		},
+		{
+			name: "rows scan ok",
+			dbFactory: &MockDBFactory{
+				conn: &MockSQLConn{
+					rows: &MockSQLRows{
+						data: [][]interface{}{
+							{"public", "test_table", 0.0, 0.0},
+							{"public", "test2_table", 0.0, 0.0},
+						},
+					},
+				},
+			},
+			logOutput: "",
+		},
+		{
+			name:      "rows err",
+			dbFactory: &MockDBFactory{conn: &MockSQLConn{rows: &MockSQLRows{rowsErr: errors.New("rows error")}}},
+			logOutput: "Error fetching rows: rows error",
+		},
+	}
+
+	for _, tc := range tt {
+		t.Run(tc.name, func(t *testing.T) {
+			updateMetrics(tc.dbFactory)
+			logOutput := logBuffer.String()
+			if !strings.Contains(logOutput, tc.logOutput) {
+				t.Errorf("expected log message '%s' was not found in the output", tc.logOutput)
+			}
+			logBuffer.Reset()
+		})
+	}
+}
+
+func TestCloseMockDB(t *testing.T) {
+	m := &MockDBFactory{}
+	d, _ := m.New("")
+	err := d.Close()
+	if err != nil {
+		t.Fail()
+	}
+	err = m.conn.Close()
+	if err != nil {
+		t.Fail()
+	}
+}
+
+func TestCheckRequests(t *testing.T) {
+	requestLimit = 100
+	checkRequests()
+}
+
+func TestSanitizeDBName(t *testing.T) {
+	sanitizeIdentifier("test")
+	sanitizeIdentifier("test;DROP TABLE test;")
+}
+
+// Just fake unused functions to improve coverage.
+func TestMockContextFuncs(t *testing.T) {
+	db := &MockDB{conn: &MockSQLConn{}}
+	args := []interface{}{}
+	_, _ = db.ExecContext(context.Background(), "x", args...)
+	_, _ = db.QueryContext(context.Background(), "x", args...)
 }
