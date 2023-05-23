@@ -12,6 +12,7 @@ services:
     working_dir: ${PWD}
     depends_on:
       - cockroach
+      - postgresql
 
   cockroach:
     image: cockroachdb/cockroach:v22.2.6
@@ -34,6 +35,22 @@ services:
       - ./roles:/cockroach/roles:ro
     depends_on:
       - cockroach
+
+  postgresql:
+    image: postgres:15
+    environment:
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=root
+      - POSTGRES_DB=rowdy
+
+  postgresql-client:
+    image: postgres:15
+    restart: "no"
+    environment:
+      - PGPASSWORD=root
+    command: [ "psql", "-h", "postgresql", "-d", "rowdy" ]
+    depends_on:
+      - postgresql
 
   robotframework:
     image: madworx/robotframework-databaselibrary

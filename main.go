@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"regexp"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -60,12 +60,12 @@ var (
 	cacheTTL      time.Duration
 	connStr       string
 	dbName        string
+	dbType        string
 	gitCommit     string
 	gitTag        string
 	listenAddress string
 	requestCount  uint64
 	requestLimit  int
-	requestMutex  sync.Mutex
 	server        *http.Server
 )
 
@@ -116,6 +116,18 @@ func queryTables(db DB, dbName string) (RowScanner, error) {
 `, dbName)
 }
 
+func queryTablesPostgreSQL(db DB, dbName string) (RowScanner, error) {
+	return db.Query(`
+        SELECT
+            schemaname AS namespace,
+            relname AS table_name,
+            pg_total_relation_size(schemaname || '.' || relname) AS size,
+            n_live_tup AS rows
+        FROM
+            pg_stat_user_tables;
+    `)
+}
+
 func checkRequests() {
 	if requestLimit > 0 {
 		requests := atomic.AddUint64(&requestCount, 1)
@@ -140,7 +152,17 @@ func updateMetrics(dbFactory DBFactory) {
 	}
 	defer db.Close()
 
-	rows, err := queryTables(db, dbName)
+	var rows RowScanner
+
+	switch dbType {
+	case "cockroachdb":
+		rows, err = queryTables(db, dbName)
+	case "postgres":
+		rows, err = queryTablesPostgreSQL(db, dbName)
+	default:
+		panic(fmt.Sprintf("Assertion failed: Invalid database type: [%s]", dbType))
+	}
+
 	if err != nil {
 		log.Println("Failed to execute query:", err)
 		queryErrorsCounter.Inc()
@@ -183,6 +205,7 @@ func main() {
 	flag.StringVar(&dbName, "db", os.Getenv("DB"), "Database name (environment variable: DB)")
 	flag.IntVar(&requestLimit, "request_limit", 0, "The maximum number of requests the server will accept before shutting down")
 	flag.StringVar(&listenAddress, "listen_address", os.Getenv("LISTEN_ADDRESS"), "Address to listen on (environment variable: LISTEN_ADDRESS)")
+	flag.StringVar(&dbType, "dbtype", "cockroachdb", "Database type: cockroachdb or postgres (default: cockroachdb)")
 
 	cacheTTLStr := os.Getenv("CACHE_TTL")
 	if cacheTTLStr != "" {
@@ -200,6 +223,10 @@ func main() {
 
 	if _, err := sanitizeIdentifier(dbName); err != nil {
 		log.Fatal("Invalid database name: ", err)
+	}
+
+	if dbType != "cockroachdb" && dbType != "postgres" {
+		log.Fatal("Invalid database type. Must be 'cockroachdb' or 'postgres'")
 	}
 
 	if listenAddress == "" {

@@ -18,8 +18,10 @@
         "source.organizeImports": true
     },
     "cSpell.words": [
+        "cockroachdb",
         "CONNSTR",
         "crdb",
+        "dbtype",
         "nspname",
         "patrickmn",
         "promhttp",

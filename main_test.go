@@ -17,6 +17,7 @@ import (
 func TestMetricsHandlerWithDatabase(t *testing.T) {
 	connStr = "postgresql://root@cockroach:26257/?sslmode=disable"
 	dbName = "test_db"
+	dbType = "cockroachdb"
 
 	// Connect to the actual database
 	factory := &SqlDBFactory{}
