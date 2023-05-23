@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -72,6 +74,16 @@ func init() {
 	prometheus.MustRegister(tableRowsGauge, tableSizeGauge, queryHistogram, queryErrorsCounter, info)
 	info.WithLabelValues(gitCommit, gitTag).Set(1)
 	c = cache.New(time.Second, 10*time.Minute)
+}
+
+// Regex to match valid identifiers. Adjust as needed.
+var isAlphaNumeric = regexp.MustCompile(`^[a-zA-Z0-9\_]+$`).MatchString
+
+func sanitizeIdentifier(identifier string) (string, error) {
+	if !isAlphaNumeric(identifier) {
+		return "", errors.New("invalid identifier")
+	}
+	return identifier, nil
 }
 
 func queryTables(db *sql.DB, dbName string) (*sql.Rows, error) {
@@ -184,6 +196,10 @@ func main() {
 	flag.DurationVar(&cacheTTL, "cache_ttl", cacheTTL, "Cache TTL (environment variable: CACHE_TTL)")
 
 	flag.Parse()
+
+	if _, err := sanitizeIdentifier(dbName); err != nil {
+		log.Fatal("Invalid database name: ", err)
+	}
 
 	if listenAddress == "" {
 		listenAddress = ":9612" // Default port

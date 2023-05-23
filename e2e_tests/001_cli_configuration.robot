@@ -18,6 +18,9 @@ Valid configuration with invalid arguments should err but not fail
     Wait For Process      timeout=5
     Expect Metric By Selector         crdb_error_query_total{}    1
 
+Invalid dbname should fail
+    Expect App Return     1     -connstr 'v' -db 'db1;DROP TABLE f00;23' -request_limit 1
+
 Empty database should ok
     Connect To Cockroach
     Setup Test Database
