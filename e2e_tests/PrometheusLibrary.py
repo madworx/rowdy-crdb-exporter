@@ -70,10 +70,11 @@ class PrometheusLibrary:
         metrics = self.metrics
 
         matching_metrics = []
-        for metric in metrics[metric_name]:
-            labels = metric["labels"]
-            if all(k in labels and str(labels[k]) == v for k, v in label_selectors.items()):
-                matching_metrics.append(metric)
+        if metric_name in metrics:
+            for metric in metrics[metric_name]:
+                labels = metric["labels"]
+                if all(k in labels and str(labels[k]) == v for k, v in label_selectors.items()):
+                    matching_metrics.append(metric)
 
         return matching_metrics
 
