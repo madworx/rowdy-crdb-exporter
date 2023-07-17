@@ -62,8 +62,31 @@ var (
 	)
 )
 
-func init() {
+func RegisterPrometheusMetrics() {
+	metrics := []prometheus.Collector{
+		indexReadCounter,
+		info,
+		queryErrorsCounter,
+		queryHistogram,
+		queryHistogramIndices,
+		queryStaleReadsCounter,
+		tableRowsGauge,
+		tableSizeGauge,
+	}
+
+	for _, metric := range metrics {
+		prometheus.Unregister(metric)
+	}
+
+	// re-register the metrics
 	prometheus.MustRegister(tableRowsGauge, tableSizeGauge, queryHistogram,
-		queryErrorsCounter, queryStaleReadsCounter, info, indexReadCounter)
+		queryErrorsCounter, queryStaleReadsCounter, info, indexReadCounter,
+		queryHistogramIndices)
+
+	// re-apply any required initial states
 	info.WithLabelValues(gitCommit, gitTag).Set(1)
+}
+
+func init() {
+	RegisterPrometheusMetrics()
 }

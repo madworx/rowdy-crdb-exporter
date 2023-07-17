@@ -10,13 +10,18 @@ No configuration should fail
 
 Invalid configuration should fail
     Expect App Return    2    -connstr 'v' -db db123 -cache_ttl snigel
+    Expect App Return    2    -connstr 'v' -db db123 -cache_ttl_indices snigel
+    Expect App Return    1    -connstr 'v' -db db123 -dbtype snigel
     Expect App Return    1    -connstr 'v'
     Expect App Return    1    -db db123
-    Expect App Return    1    -connstr 'v' -db db123 -dbtype snigel
 
 Invalid cache ttl via environment should fail
     ${res}=    Expect App Return    1    -connstr 'v' -db db123    env:CACHE_TTL=snigel
     Should Contain    ${res.stderr}    Invalid CACHE_TTL
+
+Invalid indices cache ttl via environment should fail
+    ${res}=    Expect App Return    1    -connstr 'v' -db db123    env:CACHE_TTL_INDICES=snigel
+    Should Contain    ${res.stderr}    Invalid CACHE_TTL_INDICES
 
 Invalid stale read ttl via environment should fail
     ${res}=    Expect App Return    1    -connstr 'v' -db db123    env:STALE_READ_THRESHOLD=snigel
