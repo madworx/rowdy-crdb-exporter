@@ -9,10 +9,10 @@ BUILD_CMD := $(GO) build -ldflags="-X main.gitCommit=$(shell git rev-parse --sho
 all: build-all
 
 $(DIST_DIR)/rowdy_linux_amd64_exporter: main.go .gomodtidy | $(DIST_DIR)
-	GOARCH=amd64 GOOS=linux $(BUILD_CMD) $@ 
+	GOARCH=amd64 GOOS=linux $(BUILD_CMD) $@
 
 $(DIST_DIR)/rowdy_windows_amd64_exporter.exe: main.go .gomodtidy | $(DIST_DIR)
-	GOARCH=amd64 GOOS=windows $(BUILD_CMD) $@ 
+	GOARCH=amd64 GOOS=windows $(BUILD_CMD) $@
 
 $(DIST_DIR)/rowdy_linux_arm64_exporter: main.go .gomodtidy | $(DIST_DIR)
 	GOARCH=arm64 GOOS=linux $(BUILD_CMD) $@
@@ -30,18 +30,18 @@ test:
 	go tool cover -html=coverage.out -o coverage.html
 
 e2e_tests/app: GNUmakefile main.go main_test.go .gomodtidy | $(DIST_DIR)
-	GOARCH=amd64 GOOS=linux $(GO) build -cover -o e2e_tests/app 
+	GOARCH=amd64 GOOS=linux $(GO) build -cover -o e2e_tests/app
 
 .PHONY: coverage-e2e.out
 coverage-e2e.out:
 	docker compose exec -u $(shell id -u) rowdy make e2e_tests/app
-	docker compose run --rm robotframework .
-	docker compose exec -u $(shell id -u) rowdy go tool covdata textfmt -i=./e2e_tests -o=coverage-e2e.out
+	docker compose run -u $(shell id -u) --rm robotframework .
+	docker compose exec -u $(shell id -u) rowdy go tool covdata textfmt -i=./e2e_tests/results/coverage -o=coverage-e2e.out
 	docker compose exec -u $(shell id -u) rowdy go tool cover -html=coverage-e2e.out -o coverage-e2e.html
-	docker compose exec -u $(shell id -u) rowdy go tool covdata percent -i=./e2e_tests
+	docker compose exec -u $(shell id -u) rowdy go tool covdata percent -i=./e2e_tests/results/coverage
 
 clean:
-	rm -rf $(DIST_DIR) e2e_tests/covcounters.* e2e_tests/covmeta.* coverage-e2e.out coverage-e2e.html coverage.out coverage.html
+	rm -rf $(DIST_DIR) e2e_tests/results coverage-e2e.out coverage-e2e.html coverage.out coverage.html
 
 go.mod:
 	$(GO) mod init github.com/madworx/rowdy-crdb-exporter

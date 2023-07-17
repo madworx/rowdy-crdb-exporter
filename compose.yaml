@@ -60,6 +60,8 @@ services:
     entrypoint:
       [
         "/usr/local/bin/robot",
+        "-P",
+        ".",
         "-L",
         "DEBUG",
         "-d",

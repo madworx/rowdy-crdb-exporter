@@ -9,20 +9,22 @@
       "extensions": [
         "github.copilot",
         "github.vscode-github-actions",
+        "golang.go",
         "ms-azuretools.vscode-docker",
+        "ms-python.python",
         "MS-SarifVSCode.sarif-viewer",
         "ms-vsliveshare.vsliveshare",
+        "robocorp.robotframework-lsp",
+        "shardulm94.trailing-spaces",
         "streetsidesoftware.code-spell-checker"
       ]
     }
   },
-
   "portsAttributes": {
     "9612": {
       "label": "Prometheus /metrics",
       "onAutoForward": "notify"
     }
   },
-
-  "postCreateCommand": "go mod tidy"
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install --assume-yes --no-install-recommends python3-pip && sudo pip3 install robotframework robotframework-databaselibrary robotframework-requests psycopg2-binary prometheus_client && go mod tidy"
 }

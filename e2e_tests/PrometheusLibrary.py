@@ -2,36 +2,8 @@ import requests
 import time
 from prometheus_client.parser import text_string_to_metric_families
 
-
-def parse_selector(selector):
-    # If '{' is not present in the selector, no labels are being used
-    if '{' not in selector:
-        return selector, {}
-
-    # Extracting metric name and label selectors from the PromQL selector
-    metric_name, label_selectors_str = selector.split('{', 1)
-    label_selectors_str = label_selectors_str.rstrip('}')
-
-    # If label_selectors_str is empty, no labels are being used
-    if not label_selectors_str:
-        return metric_name, {}
-
-    label_selectors = dict(s.strip().split('=')
-                           for s in label_selectors_str.split(','))
-
-    # Stripping quotes from label values
-    label_selectors = {k: v.strip('\"') for k, v in label_selectors.items()}
-
-    return metric_name, label_selectors
-
-
 class PrometheusLibrary:
-    def __init__(self, url):
-        self.url = url
-
-
-class PrometheusLibrary:
-    def __init__(self, url):
+    def __init__(self, url=None):
         self.url = url
 
     def poll_and_parse(self):
@@ -70,10 +42,11 @@ class PrometheusLibrary:
         metrics = self.metrics
 
         matching_metrics = []
-        for metric in metrics[metric_name]:
-            labels = metric["labels"]
-            if all(k in labels and str(labels[k]) == v for k, v in label_selectors.items()):
-                matching_metrics.append(metric)
+        if metric_name in metrics:
+            for metric in metrics[metric_name]:
+                labels = metric["labels"]
+                if all(k in labels and str(labels[k]) == v for k, v in label_selectors.items()):
+                    matching_metrics.append(metric)
 
         return matching_metrics
 
@@ -88,3 +61,25 @@ class PrometheusLibrary:
                 f"Expected value {expected_value}, but got {first_metric_value}")
 
         return True  # return True if the value matches the expected value
+
+
+def parse_selector(selector):
+    # If '{' is not present in the selector, no labels are being used
+    if '{' not in selector:
+        return selector, {}
+
+    # Extracting metric name and label selectors from the PromQL selector
+    metric_name, label_selectors_str = selector.split('{', 1)
+    label_selectors_str = label_selectors_str.rstrip('}')
+
+    # If label_selectors_str is empty, no labels are being used
+    if not label_selectors_str:
+        return metric_name, {}
+
+    label_selectors = dict(s.strip().split('=')
+                           for s in label_selectors_str.split(','))
+
+    # Stripping quotes from label values
+    label_selectors = {k: v.strip('\"') for k, v in label_selectors.items()}
+
+    return metric_name, label_selectors
