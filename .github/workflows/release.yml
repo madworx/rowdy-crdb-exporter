@@ -17,7 +17,7 @@ jobs:
         run: docker compose up -d
 
       - name: docker ps
-        run: docker ps 
+        run: docker ps
 
       - name: Fixup git permission checking
         run: docker exec rowdy git config --global --add safe.directory ${PWD}

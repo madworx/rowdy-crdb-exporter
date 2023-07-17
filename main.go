@@ -9,69 +9,31 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	_ "github.com/lib/pq"
 	"github.com/patrickmn/go-cache"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
-	info = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "rowdy_info",
-			Help: "Information about the Rowdy build.",
-		},
-		[]string{"commit", "version"},
-	)
-	tableRowsGauge = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "crdb_table_rows",
-			Help: "Estimated row count",
-		},
-		[]string{"db", "schema", "table_name"},
-	)
-	tableSizeGauge = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "crdb_table_size",
-			Help: "Consumed disk space",
-		},
-		[]string{"db", "schema", "table_name"},
-	)
-	queryHistogram = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Name:    "crdb_query",
-			Help:    "Time taken to execute the SQL query",
-			Buckets: prometheus.LinearBuckets(0, 0.2, 10),
-		},
-	)
-	queryErrorsCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Name: "crdb_error_query",
-			Help: "Number of query errors encountered",
-		},
-	)
-)
-
-var (
-	c             *cache.Cache
-	cacheTTL      time.Duration
-	connStr       string
-	dbName        string
-	dbType        string
-	gitCommit     string
-	gitTag        string
-	listenAddress string
-	requestCount  uint64
-	requestLimit  int
-	server        *http.Server
+	c                  *cache.Cache
+	cacheTTL           time.Duration
+	connStr            string
+	dbName             string
+	dbType             string
+	gitCommit          string
+	gitTag             string
+	listenAddress      string
+	requestCount       uint64
+	requestLimit       int
+	server             *http.Server
+	staleReadThreshold time.Duration
 )
 
 func init() {
-	prometheus.MustRegister(tableRowsGauge, tableSizeGauge, queryHistogram, queryErrorsCounter, info)
-	info.WithLabelValues(gitCommit, gitTag).Set(1)
 	c = cache.New(time.Second, 10*time.Minute)
 	requestCount = 0
 }
@@ -84,48 +46,6 @@ func sanitizeIdentifier(identifier string) (string, error) {
 		return "", errors.New("invalid identifier")
 	}
 	return identifier, nil
-}
-
-func queryTables(db DB, dbName string) (RowScanner, error) {
-	_, err := db.Exec(`USE $1`, dbName)
-	if err != nil {
-		return nil, err
-	}
-
-	return db.Query(`
-	SELECT
-		size.namespace,
-		size.table_name, 
-		size.size AS size,
-		rows.rows AS rows
-	FROM
-		(SELECT schema_name AS namespace, table_name, SUM(range_size) AS size 
-			FROM crdb_internal.ranges 
-			WHERE database_name = $1
-			GROUP BY namespace, table_name) AS size
-	LEFT JOIN 
-		(SELECT stats.table_name, 
-			pg_namespace.nspname AS namespace,
-			stats.estimated_row_count AS rows
-		FROM crdb_internal.table_row_statistics AS stats, pg_class, pg_namespace
-			WHERE pg_class.relnamespace=pg_namespace.oid
-				AND pg_class.oid=stats.table_id
-				AND nspname NOT IN ('crdb_internal', 'information_schema', 'pg_catalog', 'pg_extension')
-		) AS rows 
-	ON size.namespace=rows.namespace AND size.table_name = rows.table_name
-`, dbName)
-}
-
-func queryTablesPostgreSQL(db DB, dbName string) (RowScanner, error) {
-	return db.Query(`
-        SELECT
-            schemaname AS namespace,
-            relname AS table_name,
-            pg_total_relation_size(schemaname || '.' || relname) AS size,
-            n_live_tup AS rows
-        FROM
-            pg_stat_user_tables;
-    `)
 }
 
 func checkRequests() {
@@ -141,60 +61,170 @@ func checkRequests() {
 	}
 }
 
+func updateIndicesMetrics(dbFactory DBFactory) {
+	var wg sync.WaitGroup
+
+	ctx, cancel := context.WithTimeout(context.Background(), staleReadThreshold)
+	defer cancel()
+
+	start := time.Now()
+	doneChan := make(chan struct{})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer cancel()
+
+		db, err := dbFactory.New(connStr)
+		if err != nil {
+			log.Println("Failed to open connection:", err)
+			queryErrorsCounter.Inc()
+			return
+		}
+		defer db.Close()
+
+		var rows RowScanner
+
+		switch dbType {
+		case "cockroachdb":
+			rows, err = queryIndices(db, dbName)
+		case "postgres":
+			rows, err = queryIndicesPostgreSQL(db, dbName)
+		default:
+			panic(fmt.Sprintf("Assertion failed: Invalid database type: [%s]", dbType))
+		}
+
+		if err != nil {
+			log.Println("Failed to execute query:", err)
+			queryErrorsCounter.Inc()
+			return
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var schema, table, indexName, indexType, indexUnique string
+			var numUsed float64
+			if err := rows.Scan(&schema, &table, &indexName, &indexType, &indexUnique, &numUsed); err != nil {
+				log.Println("Failed to scan row:", err)
+				queryErrorsCounter.Inc()
+			} else {
+				indexReadCounter.WithLabelValues(dbName, schema, table, indexName, indexType, indexUnique).Set(numUsed)
+			}
+		}
+
+		if err := rows.Err(); err != nil {
+			log.Println("Error fetching rows:", err)
+			queryErrorsCounter.Inc()
+		}
+
+		queryHistogramIndices.Observe(time.Since(start).Seconds())
+		doneChan <- struct{}{}
+	}()
+
+	// Wait for the signal from the goroutine or the context timeout
+	select {
+	case <-ctx.Done():
+		// If the context is done (it took more than 3 seconds),
+		// update the cache timeout and return a stale read
+		c.Set("metrics", true, cache.DefaultExpiration)
+		queryStaleReadsCounter.Inc()
+		return
+	case <-doneChan:
+		// If a signal arrives from the channel, the query is done and the metrics are updated
+	}
+
+	// Wait for the goroutine to finish
+	wg.Wait()
+}
+
 func updateMetrics(dbFactory DBFactory) {
+	// Create a context that will be cancelled if it takes more than staleReadThreshold
+	ctx, cancel := context.WithTimeout(context.Background(), staleReadThreshold)
+	defer cancel()
+
 	start := time.Now()
 
-	db, err := dbFactory.New(connStr)
-	if err != nil {
-		log.Println("Failed to open connection:", err)
-		queryErrorsCounter.Inc()
-		return
-	}
-	defer db.Close()
+	// Use a WaitGroup to know when the goroutine finishes its execution
+	var wg sync.WaitGroup
+	wg.Add(1)
 
-	var rows RowScanner
+	// This channel will receive a signal from the goroutine when the query is done
+	doneChan := make(chan struct{})
 
-	switch dbType {
-	case "cockroachdb":
-		rows, err = queryTables(db, dbName)
-	case "postgres":
-		rows, err = queryTablesPostgreSQL(db, dbName)
-	default:
-		panic(fmt.Sprintf("Assertion failed: Invalid database type: [%s]", dbType))
-	}
+	// This function will be executed in a goroutine
+	go func() {
+		defer wg.Done()
+		defer cancel()
 
-	if err != nil {
-		log.Println("Failed to execute query:", err)
-		queryErrorsCounter.Inc()
-		return
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var schema, tableName string
-		var size, estimatedRowCount float64
-		if err := rows.Scan(&schema, &tableName, &size, &estimatedRowCount); err != nil {
-			log.Println("Failed to scan row:", err)
+		db, err := dbFactory.New(connStr)
+		if err != nil {
+			log.Println("Failed to open connection:", err)
 			queryErrorsCounter.Inc()
-		} else {
-			tableRowsGauge.WithLabelValues(dbName, schema, tableName).Set(estimatedRowCount)
-			tableSizeGauge.WithLabelValues(dbName, schema, tableName).Set(size)
+			return
 		}
+		defer db.Close()
+
+		var rows RowScanner
+
+		switch dbType {
+		case "cockroachdb":
+			rows, err = queryTables(db, dbName)
+		case "postgres":
+			rows, err = queryTablesPostgreSQL(db, dbName)
+		default:
+			panic(fmt.Sprintf("Assertion failed: Invalid database type: [%s]", dbType))
+		}
+
+		if err != nil {
+			log.Println("Failed to execute query:", err)
+			queryErrorsCounter.Inc()
+			return
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var schema, tableName string
+			var size, estimatedRowCount float64
+			if err := rows.Scan(&schema, &tableName, &size, &estimatedRowCount); err != nil {
+				log.Println("Failed to scan row:", err)
+				queryErrorsCounter.Inc()
+			} else {
+				tableRowsGauge.WithLabelValues(dbName, schema, tableName).Set(estimatedRowCount)
+				tableSizeGauge.WithLabelValues(dbName, schema, tableName).Set(size)
+			}
+		}
+
+		if err := rows.Err(); err != nil {
+			log.Println("Error fetching rows:", err)
+			queryErrorsCounter.Inc()
+		}
+
+		queryHistogram.Observe(time.Since(start).Seconds())
+		doneChan <- struct{}{}
+	}()
+
+	// Wait for the signal from the goroutine or the context timeout
+	select {
+	case <-ctx.Done():
+		// If the context is done (it took more than 3 seconds),
+		// update the cache timeout and return a stale read
+		c.Set("metrics", true, cache.DefaultExpiration)
+		queryStaleReadsCounter.Inc()
+		return
+	case <-doneChan:
+		// If a signal arrives from the channel, the query is done and the metrics are updated
 	}
 
-	if err := rows.Err(); err != nil {
-		log.Println("Error fetching rows:", err)
-		queryErrorsCounter.Inc()
-	}
-
-	queryHistogram.Observe(time.Since(start).Seconds())
-	c.Set("metrics", true, cache.DefaultExpiration)
+	// Wait for the goroutine to finish
+	wg.Wait()
 }
 
 func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	if _, found := c.Get("metrics"); !found {
 		updateMetrics(&SqlDBFactory{})
 	}
+
+	updateIndicesMetrics(&SqlDBFactory{})
 
 	promhttp.Handler().ServeHTTP(w, r)
 	checkRequests()
@@ -218,6 +248,18 @@ func main() {
 		cacheTTL = time.Duration(5) * time.Minute
 	}
 	flag.DurationVar(&cacheTTL, "cache_ttl", cacheTTL, "Cache TTL (environment variable: CACHE_TTL)")
+
+	staleReadThresholdStr := os.Getenv("STALE_READ_THRESHOLD")
+	if staleReadThresholdStr != "" {
+		var err error
+		staleReadThreshold, err = time.ParseDuration(staleReadThresholdStr)
+		if err != nil {
+			log.Fatal("Invalid STALE_READ_THRESHOLD, must be a valid Go duration string: ", err)
+		}
+	} else {
+		staleReadThreshold = time.Duration(3) * time.Second
+	}
+	flag.DurationVar(&staleReadThreshold, "stale_read_threshold", time.Second*3, "Time for executing the SQL query before stale data is returned (environment variable: STALE_READ_THRESHOLD)")
 
 	flag.Parse()
 

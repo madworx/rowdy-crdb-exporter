@@ -1,9 +1,10 @@
 # Rowdy - CockroachDB row count & size exporter for Prometheus
 
 [![Test and coverage](https://github.com/madworx/rowdy-crdb-exporter/actions/workflows/test.yml/badge.svg)](https://github.com/madworx/rowdy-crdb-exporter/actions/workflows/test.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/madworx/rowdy-crdb-exporter)](https://goreportcard.com/report/github.com/madworx/rowdy-crdb-exporter)
 [![codecov](https://codecov.io/gh/madworx/rowdy-crdb-exporter/branch/main/graph/badge.svg?token=4EMXW0RRKU)](https://codecov.io/gh/madworx/rowdy-crdb-exporter)
 
-Rowdy is a tool that connects to a CockroachDB database, fetches information about the (estimated) number of rows in each table, and the disk space those tables consume, then exports this data to Prometheus. By default, it listens on `0.0.0.0:9612`.
+Rowdy is a tool that connects to a CockroachDB or PostgreSQL database, fetches information about the (estimated) number of rows in each table, the disk space those tables consume, as well as information in index usage and then exports this data to Prometheus. By default, it listens on `0.0.0.0:9612`.
 
 *⚠️ Disclaimer: CockroachDB themselves strongly advise against running this type of tool in production environments. The tables this tool queries are considered internal and experimental, and may change in the future. Also, be prepared for it to consume a considerable amount of resources when queried. Don't say I didn't warn you, risk-taker!*
 
@@ -24,6 +25,10 @@ The address on which the exporter will listen. If not specified, defaults to `:9
 ### `-cache_ttl`
 
 The duration that data should be kept in the cache. This should be a valid Go duration string. If not specified, defaults to 5m (5 minutes). (Environment Variable `CACHE_TTL`)
+
+### `-stale_read_threshold`
+
+The maximum duration statistics gathering SQL queries may take before the query is continued in the background and stale data is returned to the requestor. (Environment variable `STALE_READ_THRESHOLD`)
 
 ## Running as a Systemd Service
 

@@ -14,11 +14,7 @@ import (
 	"time"
 )
 
-func TestMetricsHandlerWithDatabase(t *testing.T) {
-	connStr = "postgresql://root@cockroach:26257/?sslmode=disable"
-	dbName = "test_db"
-	dbType = "cockroachdb"
-
+func testMetricsHandler(t *testing.T) {
 	// Connect to the actual database
 	factory := &SqlDBFactory{}
 	db, err := factory.New(connStr)
@@ -27,23 +23,30 @@ func TestMetricsHandlerWithDatabase(t *testing.T) {
 	}
 	defer db.Close()
 
-	_, err = db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName))
-	if err != nil {
-		t.Fatalf("failed to drop test database: %v", err)
-	}
+	if dbType != "postgres" {
+		_, err = db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName))
+		if err != nil {
+			t.Fatalf("failed to drop test database: %v", err)
+		}
 
-	_, err = db.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName))
-	if err != nil {
-		t.Fatalf("failed to create test database: %v", err)
-	}
+		_, err = db.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName))
+		if err != nil {
+			t.Fatalf("failed to create test database: %v", err)
+		}
 
-	_, err = db.Exec(fmt.Sprintf("USE %s", dbName))
-	if err != nil {
-		t.Fatalf("failed to use test database: %v", err)
+		_, err = db.Exec(fmt.Sprintf("USE %s", dbName))
+		if err != nil {
+			t.Fatalf("failed to use test database: %v", err)
+		}
 	}
 
 	// Create a new table for testing
 	tableName := "test_table"
+	_, err = db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName))
+	if err != nil {
+		t.Fatalf("failed to drop existing test table: %v", err)
+	}
+
 	_, err = db.Exec(fmt.Sprintf("CREATE TABLE %s (id SERIAL PRIMARY KEY, name TEXT)", tableName))
 	if err != nil {
 		t.Fatalf("failed to create test table: %v", err)
@@ -51,7 +54,11 @@ func TestMetricsHandlerWithDatabase(t *testing.T) {
 
 	// Wait until queryTables starts returning rows
 	for {
-		rows, err := queryTables(db, dbName)
+		queryFunc := queryTables
+		if dbType == "postgres" {
+			queryFunc = queryTablesPostgreSQL
+		}
+		rows, err := queryFunc(db, dbName)
 		if err != nil {
 			t.Fatalf("failed to query tables: %v", err)
 		}
@@ -69,20 +76,20 @@ func TestMetricsHandlerWithDatabase(t *testing.T) {
 	}
 	rr := httptest.NewRecorder()
 
-	// Execute metricsHandler
-	metricsHandler(rr, req)
+	// Execute metricsHandler 10000 times
+	for i := 1; i < 100; i++ {
+		metricsHandler(rr, req)
+	}
 
-	// Check the response body for the expected table name
-	expected := fmt.Sprintf(`# HELP crdb_table_rows Estimated row count
-# TYPE crdb_table_rows gauge
-crdb_table_rows{db="%s",schema="public",table_name="%s"} 0
-# HELP crdb_table_size Consumed disk space
-# TYPE crdb_table_size gauge
-crdb_table_size{db="%s",schema="public",table_name="%s"} 0`,
-		dbName, tableName, dbName, tableName)
-	// Check if rr.Body.String() contains the expected string
-	if !strings.Contains(rr.Body.String(), expected) {
-		t.Errorf("handler returned unexpected body: got %v want %v", rr.Body.String(), expected)
+	expected := []string{
+		fmt.Sprintf(`table_rows{db="%s",schema="public",table_name="%s"} 0`, dbName, tableName),
+		fmt.Sprintf(`table_size{db="%s",schema="public",table_name="%s"} `, dbName, tableName),
+	}
+	responseBody := rr.Body.String()
+	for _, expectedValue := range expected {
+		if !strings.Contains(responseBody, expectedValue) {
+			t.Errorf("handler didn't contain: [%v] (was: [%v])", expectedValue, responseBody)
+		}
 	}
 
 	// Print any errors encountered during the test execution
@@ -91,7 +98,26 @@ crdb_table_size{db="%s",schema="public",table_name="%s"} 0`,
 	}
 }
 
+func TestMetricsHandlerWithCockroachDB(t *testing.T) {
+	connStr = "postgresql://root@cockroach:26257/?sslmode=disable"
+	dbName = "test_db"
+	dbType = "cockroachdb"
+	staleReadThreshold = time.Duration(10) * time.Second
+
+	testMetricsHandler(t)
+}
+
+func TestMetricsHandlerWithPostgreSQL(t *testing.T) {
+	connStr = "postgresql://root:root@postgresql/rowdy?sslmode=disable"
+	dbName = "rowdy"
+	dbType = "postgres"
+	staleReadThreshold = time.Duration(10) * time.Second
+
+	testMetricsHandler(t)
+}
+
 func TestUpdateMetrics(t *testing.T) {
+	dbType = "cockroachdb"
 	var logBuffer bytes.Buffer
 	log.SetOutput(&logBuffer)
 	defer func() {
@@ -159,7 +185,7 @@ func TestUpdateMetrics(t *testing.T) {
 			updateMetrics(tc.dbFactory)
 			logOutput := logBuffer.String()
 			if !strings.Contains(logOutput, tc.logOutput) {
-				t.Errorf("expected log message '%s' was not found in the output", tc.logOutput)
+				t.Errorf("expected log message '%s' was not found in the output [%v]", tc.logOutput, logOutput)
 			}
 			logBuffer.Reset()
 		})
