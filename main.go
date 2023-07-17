@@ -18,24 +18,31 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-var (
-	c                  *cache.Cache
+type config struct {
 	cacheTTL           time.Duration
+	cacheTTLIndices    time.Duration
 	connStr            string
 	dbName             string
 	dbType             string
-	gitCommit          string
-	gitTag             string
 	listenAddress      string
 	requestCount       uint64
 	requestLimit       int
-	server             *http.Server
 	staleReadThreshold time.Duration
+}
+
+var (
+	cacheIndices *cache.Cache
+	cacheMetrics *cache.Cache
+	Config       config
+	gitCommit    string
+	gitTag       string
+	server       *http.Server
 )
 
 func init() {
-	c = cache.New(time.Second, 10*time.Minute)
-	requestCount = 0
+	cacheMetrics = cache.New(time.Second, 10*time.Minute)
+	cacheIndices = cache.New(time.Second, 10*time.Minute)
+	Config.requestCount = 0
 }
 
 // Regex to match valid identifiers. Adjust as needed.
@@ -49,9 +56,9 @@ func sanitizeIdentifier(identifier string) (string, error) {
 }
 
 func checkRequests() {
-	if requestLimit > 0 {
-		requests := atomic.AddUint64(&requestCount, 1)
-		if int(requests) >= requestLimit {
+	if Config.requestLimit > 0 {
+		requests := atomic.AddUint64(&Config.requestCount, 1)
+		if int(requests) >= Config.requestLimit {
 			go func() {
 				if err := server.Shutdown(context.Background()); err != nil {
 					log.Fatalf("Could not gracefully shutdown the server: %v\n", err)
@@ -64,7 +71,7 @@ func checkRequests() {
 func updateIndicesMetrics(dbFactory DBFactory) {
 	var wg sync.WaitGroup
 
-	ctx, cancel := context.WithTimeout(context.Background(), staleReadThreshold)
+	ctx, cancel := context.WithTimeout(context.Background(), Config.staleReadThreshold)
 	defer cancel()
 
 	start := time.Now()
@@ -75,7 +82,7 @@ func updateIndicesMetrics(dbFactory DBFactory) {
 		defer wg.Done()
 		defer cancel()
 
-		db, err := dbFactory.New(connStr)
+		db, err := dbFactory.New(Config.connStr)
 		if err != nil {
 			log.Println("Failed to open connection:", err)
 			queryErrorsCounter.Inc()
@@ -85,13 +92,13 @@ func updateIndicesMetrics(dbFactory DBFactory) {
 
 		var rows RowScanner
 
-		switch dbType {
+		switch Config.dbType {
 		case "cockroachdb":
-			rows, err = queryIndices(db, dbName)
+			rows, err = queryIndices(db, Config.dbName)
 		case "postgres":
-			rows, err = queryIndicesPostgreSQL(db, dbName)
+			rows, err = queryIndicesPostgreSQL(db, Config.dbName)
 		default:
-			panic(fmt.Sprintf("Assertion failed: Invalid database type: [%s]", dbType))
+			panic(fmt.Sprintf("Assertion failed: Invalid database type: [%s]", Config.dbType))
 		}
 
 		if err != nil {
@@ -108,7 +115,7 @@ func updateIndicesMetrics(dbFactory DBFactory) {
 				log.Println("Failed to scan row:", err)
 				queryErrorsCounter.Inc()
 			} else {
-				indexReadCounter.WithLabelValues(dbName, schema, table, indexName, indexType, indexUnique).Set(numUsed)
+				indexReadCounter.WithLabelValues(Config.dbName, schema, table, indexName, indexType, indexUnique).Set(numUsed)
 			}
 		}
 
@@ -118,6 +125,7 @@ func updateIndicesMetrics(dbFactory DBFactory) {
 		}
 
 		queryHistogramIndices.Observe(time.Since(start).Seconds())
+		cacheIndices.Set("metricsIndices", true, cache.DefaultExpiration)
 		doneChan <- struct{}{}
 	}()
 
@@ -126,7 +134,7 @@ func updateIndicesMetrics(dbFactory DBFactory) {
 	case <-ctx.Done():
 		// If the context is done (it took more than 3 seconds),
 		// update the cache timeout and return a stale read
-		c.Set("metrics", true, cache.DefaultExpiration)
+		cacheIndices.Set("metricsIndices", true, cache.DefaultExpiration)
 		queryStaleReadsCounter.Inc()
 		return
 	case <-doneChan:
@@ -139,7 +147,7 @@ func updateIndicesMetrics(dbFactory DBFactory) {
 
 func updateMetrics(dbFactory DBFactory) {
 	// Create a context that will be cancelled if it takes more than staleReadThreshold
-	ctx, cancel := context.WithTimeout(context.Background(), staleReadThreshold)
+	ctx, cancel := context.WithTimeout(context.Background(), Config.staleReadThreshold)
 	defer cancel()
 
 	start := time.Now()
@@ -156,7 +164,7 @@ func updateMetrics(dbFactory DBFactory) {
 		defer wg.Done()
 		defer cancel()
 
-		db, err := dbFactory.New(connStr)
+		db, err := dbFactory.New(Config.connStr)
 		if err != nil {
 			log.Println("Failed to open connection:", err)
 			queryErrorsCounter.Inc()
@@ -166,13 +174,13 @@ func updateMetrics(dbFactory DBFactory) {
 
 		var rows RowScanner
 
-		switch dbType {
+		switch Config.dbType {
 		case "cockroachdb":
-			rows, err = queryTables(db, dbName)
+			rows, err = queryTables(db, Config.dbName)
 		case "postgres":
-			rows, err = queryTablesPostgreSQL(db, dbName)
+			rows, err = queryTablesPostgreSQL(db, Config.dbName)
 		default:
-			panic(fmt.Sprintf("Assertion failed: Invalid database type: [%s]", dbType))
+			panic(fmt.Sprintf("Assertion failed: Invalid database type: [%s]", Config.dbType))
 		}
 
 		if err != nil {
@@ -189,8 +197,8 @@ func updateMetrics(dbFactory DBFactory) {
 				log.Println("Failed to scan row:", err)
 				queryErrorsCounter.Inc()
 			} else {
-				tableRowsGauge.WithLabelValues(dbName, schema, tableName).Set(estimatedRowCount)
-				tableSizeGauge.WithLabelValues(dbName, schema, tableName).Set(size)
+				tableRowsGauge.WithLabelValues(Config.dbName, schema, tableName).Set(estimatedRowCount)
+				tableSizeGauge.WithLabelValues(Config.dbName, schema, tableName).Set(size)
 			}
 		}
 
@@ -200,6 +208,7 @@ func updateMetrics(dbFactory DBFactory) {
 		}
 
 		queryHistogram.Observe(time.Since(start).Seconds())
+		cacheMetrics.Set("metrics", true, cache.DefaultExpiration)
 		doneChan <- struct{}{}
 	}()
 
@@ -208,7 +217,7 @@ func updateMetrics(dbFactory DBFactory) {
 	case <-ctx.Done():
 		// If the context is done (it took more than 3 seconds),
 		// update the cache timeout and return a stale read
-		c.Set("metrics", true, cache.DefaultExpiration)
+		cacheMetrics.Set("metrics", true, cache.DefaultExpiration)
 		queryStaleReadsCounter.Inc()
 		return
 	case <-doneChan:
@@ -220,74 +229,94 @@ func updateMetrics(dbFactory DBFactory) {
 }
 
 func metricsHandler(w http.ResponseWriter, r *http.Request) {
-	if _, found := c.Get("metrics"); !found {
+	if _, found := cacheMetrics.Get("metrics"); !found {
 		updateMetrics(&SqlDBFactory{})
 	}
 
-	updateIndicesMetrics(&SqlDBFactory{})
+	if _, found := cacheIndices.Get("metricsIndices"); !found {
+		updateIndicesMetrics(&SqlDBFactory{})
+	}
 
 	promhttp.Handler().ServeHTTP(w, r)
 	checkRequests()
 }
 
 func main() {
-	flag.StringVar(&connStr, "connstr", os.Getenv("CONNSTR"), "Database connection string (environment variable: CONNSTR)")
-	flag.StringVar(&dbName, "db", os.Getenv("DB"), "Database name (environment variable: DB)")
-	flag.IntVar(&requestLimit, "request_limit", 0, "The maximum number of requests the server will accept before shutting down")
-	flag.StringVar(&listenAddress, "listen_address", os.Getenv("LISTEN_ADDRESS"), "Address to listen on (environment variable: LISTEN_ADDRESS)")
-	flag.StringVar(&dbType, "dbtype", "cockroachdb", "Database type: cockroachdb or postgres (default: cockroachdb)")
+	flag.StringVar(&Config.connStr, "connstr", os.Getenv("CONNSTR"), "Database connection string (environment variable: CONNSTR)")
+	flag.StringVar(&Config.dbName, "db", os.Getenv("DB"), "Database name (environment variable: DB)")
+	flag.IntVar(&Config.requestLimit, "request_limit", 0, "The maximum number of requests the server will accept before shutting down")
+	flag.StringVar(&Config.listenAddress, "listen_address", os.Getenv("LISTEN_ADDRESS"), "Address to listen on (environment variable: LISTEN_ADDRESS)")
+	flag.StringVar(&Config.dbType, "dbtype", "cockroachdb", "Database type: cockroachdb or postgres (default: cockroachdb)")
 
 	cacheTTLStr := os.Getenv("CACHE_TTL")
 	if cacheTTLStr != "" {
 		var err error
-		cacheTTL, err = time.ParseDuration(cacheTTLStr)
+		Config.cacheTTL, err = time.ParseDuration(cacheTTLStr)
 		if err != nil {
 			log.Fatal("Invalid CACHE_TTL, must be a valid Go duration string: ", err)
 		}
 	} else {
-		cacheTTL = time.Duration(5) * time.Minute
+		Config.cacheTTL = time.Duration(5) * time.Minute
 	}
-	flag.DurationVar(&cacheTTL, "cache_ttl", cacheTTL, "Cache TTL (environment variable: CACHE_TTL)")
+	flag.DurationVar(&Config.cacheTTL, "cache_ttl", Config.cacheTTL, "Cache TTL (environment variable: CACHE_TTL)")
+
+	cacheTTLIndicesStr := os.Getenv("CACHE_TTL_INDICES")
+	if cacheTTLIndicesStr != "" {
+		var err error
+		Config.cacheTTLIndices, err = time.ParseDuration(cacheTTLIndicesStr)
+		if err != nil {
+			log.Fatal("Invalid CACHE_TTL_INDICES, must be a valid Go duration string: ", err)
+		}
+	} else {
+		Config.cacheTTLIndices = time.Duration(5) * time.Minute
+	}
+	flag.DurationVar(&Config.cacheTTLIndices, "cache_ttl_indices", Config.cacheTTLIndices, "Cache TTL Indices (environment variable: CACHE_TTL_INDICES)")
 
 	staleReadThresholdStr := os.Getenv("STALE_READ_THRESHOLD")
 	if staleReadThresholdStr != "" {
 		var err error
-		staleReadThreshold, err = time.ParseDuration(staleReadThresholdStr)
+		Config.staleReadThreshold, err = time.ParseDuration(staleReadThresholdStr)
 		if err != nil {
 			log.Fatal("Invalid STALE_READ_THRESHOLD, must be a valid Go duration string: ", err)
 		}
 	} else {
-		staleReadThreshold = time.Duration(3) * time.Second
+		Config.staleReadThreshold = time.Duration(3) * time.Second
 	}
-	flag.DurationVar(&staleReadThreshold, "stale_read_threshold", time.Second*3, "Time for executing the SQL query before stale data is returned (environment variable: STALE_READ_THRESHOLD)")
+	flag.DurationVar(&Config.staleReadThreshold, "stale_read_threshold", time.Second*3, "Time for executing the SQL query before stale data is returned (environment variable: STALE_READ_THRESHOLD)")
 
 	flag.Parse()
 
-	if _, err := sanitizeIdentifier(dbName); err != nil {
+	if _, err := sanitizeIdentifier(Config.dbName); err != nil {
 		log.Fatal("Invalid database name: ", err)
 	}
 
-	if dbType != "cockroachdb" && dbType != "postgres" {
+	if Config.dbType != "cockroachdb" && Config.dbType != "postgres" {
 		log.Fatal("Invalid database type. Must be 'cockroachdb' or 'postgres'")
 	}
 
-	if listenAddress == "" {
-		listenAddress = ":9612" // Default port
+	if Config.listenAddress == "" {
+		Config.listenAddress = ":9612" // Default port
 	}
-	if connStr == "" || dbName == "" {
+	if Config.connStr == "" || Config.dbName == "" {
 		log.Fatal("Database connection string and name must be provided via command line arguments or environment variables")
 	}
-	c = cache.New(cacheTTL, 10*time.Minute)
 
-	log.Printf("Rowdy - CockroachDB table rows/size statistics "+
+	cacheMetrics = cache.New(Config.cacheTTL, 10*time.Minute)
+	cacheIndices = cache.New(Config.cacheTTLIndices, 10*time.Minute)
+
+	log.Printf("Rowdy - CockroachDB/PostgreSQL table rows/size & index statistics "+
 		"exporter for Prometheus. (git:%s version:%s)\n",
 		gitCommit, gitTag)
+
+	// log.Printf("Configuration: %#v\n", Config)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", metricsHandler)
 
 	server = &http.Server{
-		Addr:    listenAddress,
+		Addr:    Config.listenAddress,
 		Handler: mux,
 	}
 	server.ListenAndServe()
+	log.Printf("Exiting.")
 }

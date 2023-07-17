@@ -17,24 +17,24 @@ import (
 func testMetricsHandler(t *testing.T) {
 	// Connect to the actual database
 	factory := &SqlDBFactory{}
-	db, err := factory.New(connStr)
+	db, err := factory.New(Config.connStr)
 	if err != nil {
 		t.Fatalf("failed to connect to the database: %v", err)
 	}
 	defer db.Close()
 
-	if dbType != "postgres" {
-		_, err = db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", dbName))
+	if Config.dbType != "postgres" {
+		_, err = db.Exec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", Config.dbName))
 		if err != nil {
 			t.Fatalf("failed to drop test database: %v", err)
 		}
 
-		_, err = db.Exec(fmt.Sprintf("CREATE DATABASE %s", dbName))
+		_, err = db.Exec(fmt.Sprintf("CREATE DATABASE %s", Config.dbName))
 		if err != nil {
 			t.Fatalf("failed to create test database: %v", err)
 		}
 
-		_, err = db.Exec(fmt.Sprintf("USE %s", dbName))
+		_, err = db.Exec(fmt.Sprintf("USE %s", Config.dbName))
 		if err != nil {
 			t.Fatalf("failed to use test database: %v", err)
 		}
@@ -55,10 +55,10 @@ func testMetricsHandler(t *testing.T) {
 	// Wait until queryTables starts returning rows
 	for {
 		queryFunc := queryTables
-		if dbType == "postgres" {
+		if Config.dbType == "postgres" {
 			queryFunc = queryTablesPostgreSQL
 		}
-		rows, err := queryFunc(db, dbName)
+		rows, err := queryFunc(db, Config.dbName)
 		if err != nil {
 			t.Fatalf("failed to query tables: %v", err)
 		}
@@ -76,14 +76,13 @@ func testMetricsHandler(t *testing.T) {
 	}
 	rr := httptest.NewRecorder()
 
-	// Execute metricsHandler 10000 times
-	for i := 1; i < 100; i++ {
+	for i := 0; i < 100; i++ {
 		metricsHandler(rr, req)
 	}
 
 	expected := []string{
-		fmt.Sprintf(`table_rows{db="%s",schema="public",table_name="%s"} 0`, dbName, tableName),
-		fmt.Sprintf(`table_size{db="%s",schema="public",table_name="%s"} `, dbName, tableName),
+		fmt.Sprintf(`table_rows{db="%s",schema="public",table_name="%s"} 0`, Config.dbName, tableName),
+		fmt.Sprintf(`table_size{db="%s",schema="public",table_name="%s"} `, Config.dbName, tableName),
 	}
 	responseBody := rr.Body.String()
 	for _, expectedValue := range expected {
@@ -98,26 +97,28 @@ func testMetricsHandler(t *testing.T) {
 	}
 }
 
-func TestMetricsHandlerWithCockroachDB(t *testing.T) {
-	connStr = "postgresql://root@cockroach:26257/?sslmode=disable"
-	dbName = "test_db"
-	dbType = "cockroachdb"
-	staleReadThreshold = time.Duration(10) * time.Second
-
-	testMetricsHandler(t)
-}
-
 func TestMetricsHandlerWithPostgreSQL(t *testing.T) {
-	connStr = "postgresql://root:root@postgresql/rowdy?sslmode=disable"
-	dbName = "rowdy"
-	dbType = "postgres"
-	staleReadThreshold = time.Duration(10) * time.Second
-
+	Config.connStr = "postgresql://root:root@postgresql/rowdy?sslmode=disable"
+	Config.dbName = "rowdy"
+	Config.dbType = "postgres"
+	Config.staleReadThreshold = time.Duration(10) * time.Second
+	RegisterPrometheusMetrics()
 	testMetricsHandler(t)
 }
+
+func TestMetricsHandlerWithCockroachDB(t *testing.T) {
+	Config.connStr = "postgresql://root@cockroach:26257/?sslmode=disable"
+	Config.dbName = "test_db"
+	Config.dbType = "cockroachdb"
+	Config.staleReadThreshold = time.Duration(10) * time.Second
+	RegisterPrometheusMetrics()
+	testMetricsHandler(t)
+}
+
+//  main_test.go:91: handler didn't contain: [table_rows{db="rowdy",schema="public",table_name="test_table"} 0] (was: [# HELP go_gc_duration_seconds A summary of the pause duration of garbage collection cycles.
 
 func TestUpdateMetrics(t *testing.T) {
-	dbType = "cockroachdb"
+	Config.dbType = "cockroachdb"
 	var logBuffer bytes.Buffer
 	log.SetOutput(&logBuffer)
 	defer func() {
@@ -206,7 +207,7 @@ func TestCloseMockDB(t *testing.T) {
 }
 
 func TestCheckRequests(t *testing.T) {
-	requestLimit = 100
+	Config.requestLimit = 100
 	checkRequests()
 }
 
